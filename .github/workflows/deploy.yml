@@ -1,10 +1,11 @@
-name: Deploy Portfolio to GitHub Pages
+name: Deploy DevOps Portfolio to GitHub Pages
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,53 +14,178 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  # Validation and Linting Job
+  validate:
+    name: Validate HTML/CSS/JS
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # Add any Python dependencies here if needed
-        
-    - name: Convert Markdown to HTML
-      run: |
-        if [ -f "portfolio.md" ]; then
-          echo "Converting portfolio.md to HTML..."
-          python convert-markdown.py portfolio.md
-        elif [ -f "devops-portfolio.md" ]; then
-          echo "Converting devops-portfolio.md to HTML..."
-          python convert-markdown.py devops-portfolio.md
-        elif [ -f "README.md" ]; then
-          echo "Converting README.md to HTML..."
-          python convert-markdown.py README.md
-        else
-          echo "No markdown file found. Looking for existing HTML files..."
-          if [ ! -f "index.html" ]; then
-            echo "Error: No portfolio.md, README.md, or index.html found!"
-            exit 1
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate HTML
+        uses: Cyb3r-Jak3/html5validator-action@v7.2.0
+        with:
+          root: ./
+          css: true
+          format: text
+        continue-on-error: true
+
+      - name: Install Linters
+        run: |
+          npm install -g stylelint stylelint-config-standard
+          npm install -g eslint
+
+      - name: Lint CSS
+        run: |
+          echo "Running CSS linter..."
+          stylelint "*.css" --config-basedir $(npm root -g) || echo "CSS linting completed with warnings"
+        continue-on-error: true
+
+      - name: Lint JavaScript
+        run: |
+          echo "Running JavaScript linter..."
+          eslint *.js --no-eslintrc --env browser,es6 || echo "JS linting completed with warnings"
+        continue-on-error: true
+
+      - name: Check File Sizes
+        run: |
+          echo "Checking asset sizes..."
+          find . -type f \( -name "*.html" -o -name "*.css" -o -name "*.js" \) -exec ls -lh {} \;
+
+  # Build and Optimize Job
+  build:
+    name: Build and Optimize
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Create Optimized Build
+        run: |
+          echo "Creating optimized build..."
+          mkdir -p _site
+          
+          # Copy all necessary files
+          cp index.html _site/
+          cp style.css _site/
+          cp script.js _site/
+          
+          # Copy assets if they exist
+          if [ -d "assets" ]; then
+            cp -r assets _site/
           fi
-        fi
-        
-    - name: Setup Pages
-      uses: actions/configure-pages@v4
-      
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: '.'
-        
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
+          
+          # Create robots.txt
+          cat > _site/robots.txt << 'EOF'
+          User-agent: *
+          Allow: /
+          Sitemap: https://jatinlodhi2002.github.io/sitemap.xml
+          EOF
+          
+          # Create sitemap.xml
+          cat > _site/sitemap.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url>
+              <loc>https://jatinlodhi2002.github.io/</loc>
+              <lastmod>$(date +%Y-%m-%d)</lastmod>
+              <changefreq>weekly</changefreq>
+              <priority>1.0</priority>
+            </url>
+          </urlset>
+          EOF
+          
+          # Create .nojekyll to prevent Jekyll processing
+          touch _site/.nojekyll
+          
+          echo "Build completed successfully!"
+
+      - name: Display Build Info
+        run: |
+          echo "📦 Build Artifacts:"
+          ls -la _site/
+          echo ""
+          echo "📊 File Sizes:"
+          du -sh _site/*
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  # Deploy to GitHub Pages Job
+  deploy:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Deployment Success Summary
+        if: success()
+        run: |
+          echo "🎉 Deployment Successful!"
+          echo "=================================="
+          echo "✅ Site Status: Live"
+          echo "🌐 URL: https://jatinlodhi2002.github.io"
+          echo "📅 Deployed: $(date)"
+          echo "🔧 Deployment ID: ${{ steps.deployment.outputs.page_url }}"
+          echo "=================================="
+
+      - name: Create Deployment Badge
+        if: success()
+        run: |
+          echo "Creating deployment status badge..."
+          echo "Badge: [![Deployment](https://img.shields.io/badge/deployment-active-success)](https://jatinlodhi2002.github.io)"
+
+  # Performance Testing Job (Optional)
+  performance-test:
+    name: Performance Audit
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Wait for Deployment
+        run: |
+          echo "Waiting 30 seconds for deployment to propagate..."
+          sleep 30
+
+      - name: Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            https://jatinlodhi2002.github.io
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+        continue-on-error: true
+
+      - name: Performance Summary
+        run: |
+          echo "🚀 Performance audit completed!"
+          echo "Check Lighthouse report in artifacts"
