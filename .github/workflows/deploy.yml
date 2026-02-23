@@ -69,11 +69,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-        with:
-          enablement: true
-
       - name: Create Optimized Build
         run: |
           echo "Creating optimized build..."
